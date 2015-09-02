@@ -13,14 +13,14 @@ var (
 	// Default: /opsee.co/portmapper
 	RegistryPath string
 	// EtcdHost is the IP_ADDRESS:PORT location of Etcd.
-	// Default: 127.0.0.1:2379
+	// Default: http://127.0.0.1:2379
 	EtcdHost   string
 	etcdClient *etcd.Client
 )
 
 func init() {
 	RegistryPath = "/opsee.co/portmapper"
-	EtcdHost = "127.0.0.1:2379"
+	EtcdHost = "http://127.0.0.1:2379"
 }
 
 // Service is a mapping between a service name and port. It may also contain
@@ -70,6 +70,8 @@ func UnmarshalService(bytes []byte) (*Service, error) {
 
 // Unregister a (service, port) tuple.
 func Unregister(name string, port int) error {
+	etcdClient = etcd.NewClient([]string{EtcdHost})
+
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
 	if err := svc.validate(); err != nil {
 		return err
@@ -84,6 +86,8 @@ func Unregister(name string, port int) error {
 
 // Register a (service, port) tuple.
 func Register(name string, port int) error {
+	etcdClient = etcd.NewClient([]string{EtcdHost})
+
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
 	if err := svc.validate(); err != nil {
 		return err
@@ -104,6 +108,8 @@ func Register(name string, port int) error {
 // Services returns an array of Service pointers detailing the service name and
 // port of each registered service.
 func Services() ([]*Service, error) {
+	etcdClient = etcd.NewClient([]string{EtcdHost})
+
 	resp, err := etcdClient.Get(RegistryPath, false, false)
 	if err != nil {
 		return nil, err
