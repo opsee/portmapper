@@ -14,7 +14,7 @@ var (
 )
 
 func init() {
-  RegistryPath = "/var/run/bastion"
+  RegistryPath = "/zuul/state/bastion"
 }
 
 // Service is a mapping between a service name and port.
