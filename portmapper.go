@@ -3,9 +3,10 @@ package portmapper
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-
 	"github.com/coreos/go-etcd/etcd"
+	"os"
+	"sync"
+	"time"
 )
 
 var (
@@ -16,7 +17,8 @@ var (
 	// Default: http://127.0.0.1:2379
 	EtcdHost   string
 	etcdClient *etcd.Client
-	ServiceMap *map[string]*ServiceRegistration
+	ServiceMap map[string]*ServiceRegistration
+	once       sync.Once
 )
 
 func init() {
@@ -36,7 +38,7 @@ type Service struct {
 
 type ServiceRegistration struct {
 	Service   *Service
-	Timestamp uint64
+	Timestamp int64
 	err       error
 }
 
@@ -94,12 +96,12 @@ func Unregister(name string, port int) error {
 // Loops over each service type in the map and attempt to register
 func RegisterServices() {
 	for {
-		wg := *sync.WaitGroup()
+		wg := &sync.WaitGroup{}
 		for service_name := range ServiceMap {
-			wg.add(1)
+			wg.Add(1)
 			go func() {
 				defer wg.Done()
-
+				println("registering: " + service_name)
 				etcdClient = etcd.NewClient([]string{EtcdHost})
 				svc := ServiceMap[service_name].Service
 				ServiceMap[service_name].Timestamp = time.Now().Unix()
@@ -130,6 +132,10 @@ func RegisterServices() {
 func Register(name string, port int) error {
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
 	ServiceMap[name] = &ServiceRegistration{Service: svc, Timestamp: 0, err: nil}
+
+	//XXX I assume that this will not exit ever
+	once.Do(RegisterServices)
+	return nil
 }
 
 // Services returns an array of Service pointers detailing the service name and
