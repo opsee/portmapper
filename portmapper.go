@@ -16,6 +16,7 @@ var (
 	// Default: http://127.0.0.1:2379
 	EtcdHost   string
 	etcdClient *etcd.Client
+	ServiceMap *map[string]*ServiceRegistration
 )
 
 func init() {
@@ -31,6 +32,12 @@ type Service struct {
 	Name     string `json:"name"`
 	Port     int    `json:"port"`
 	Hostname string `json:"hostname,omitempty"`
+}
+
+type ServiceRegistration struct {
+	Service   *Service
+	Timestamp uint64
+	err       error
 }
 
 func (s *Service) validate() error {
@@ -84,29 +91,49 @@ func Unregister(name string, port int) error {
 	return nil
 }
 
+// Loops over each service type in the map and attempt to register
+func RegisterServices() {
+	for {
+		wg := *sync.WaitGroup()
+		for service_name := range ServiceMap {
+			wg.add(1)
+			go func() {
+				defer wg.Done()
+
+				etcdClient = etcd.NewClient([]string{EtcdHost})
+				svc := ServiceMap[service_name].Service
+				ServiceMap[service_name].Timestamp = time.Now().Unix()
+				ServiceMap[service_name].err = nil
+
+				if err := svc.validate(); err != nil {
+					ServiceMap[service_name].err = err
+				}
+
+				bytes, err := svc.Marshal()
+				if err != nil {
+					ServiceMap[service_name].err = err
+				}
+
+				if _, err = etcdClient.Set(svc.path(), string(bytes), 0); err != nil {
+					ServiceMap[service_name].err = err
+				}
+			}()
+		}
+
+		// Wait for all services to be registered
+		wg.Wait()
+		time.Sleep(60 * time.Second)
+	}
+}
+
 // Register a (service, port) tuple.
 func Register(name string, port int) error {
-	etcdClient = etcd.NewClient([]string{EtcdHost})
-
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
-	if err := svc.validate(); err != nil {
-		return err
-	}
-
-	bytes, err := svc.Marshal()
-	if err != nil {
-		return err
-	}
-
-	if _, err = etcdClient.Set(svc.path(), string(bytes), 0); err != nil {
-		return err
-	}
-
-	return nil
+	ServiceMap[name] = &ServiceRegistration{Service: svc, Timestamp: 0, err: nil}
 }
 
 // Services returns an array of Service pointers detailing the service name and
-// port of each registered service.
+// port of each registered service. (from etcd)
 func Services() ([]*Service, error) {
 	etcdClient = etcd.NewClient([]string{EtcdHost})
 
