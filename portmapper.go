@@ -3,9 +3,11 @@ package portmapper
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-
+	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/go-etcd/etcd"
+	"os"
+	"sync"
+	"time"
 )
 
 var (
@@ -84,29 +86,83 @@ func Unregister(name string, port int) error {
 	return nil
 }
 
+// legacy register
 // Register a (service, port) tuple.
 func Register(name string, port int) error {
-	etcdClient = etcd.NewClient([]string{EtcdHost})
+	return RegisterService(name, port, 11) // about 4 seconds
+}
 
+// Register a (service, port) tuple.
+func RegisterService(name string, port int, retries int) error {
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
-	if err := svc.validate(); err != nil {
-		return err
+
+	var regerr error
+
+	for try := 1; try < retries; try++ {
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+
+		// Attempt to register the service
+		go func() {
+			defer wg.Done()
+			etcdClient = etcd.NewClient([]string{EtcdHost})
+
+			if err := svc.validate(); err != nil {
+				log.WithFields(log.Fields{
+					"action":  "set",
+					"service": name,
+					"port":    svc.Port,
+					"errstr":  err.Error(),
+				}).Warn("Failed to register service with etcd")
+				regerr = err
+				return
+			}
+			bytes, err := svc.Marshal()
+			if err != nil {
+				log.WithFields(log.Fields{
+					"action":  "set",
+					"service": name,
+					"port":    svc.Port,
+					"errstr":  err.Error(),
+				}).Warn("Failed to register service with etcd")
+				regerr = err
+				return
+			}
+			if _, err = etcdClient.Set(svc.path(), string(bytes), 0); err != nil {
+				log.WithFields(log.Fields{
+					"action":  "set",
+					"service": name,
+					"port":    svc.Port,
+					"errstr":  err.Error(),
+				}).Warn("Failed to register service with etcd")
+				regerr = err
+				return
+			} else {
+				log.WithFields(log.Fields{
+					"action":  "set",
+					"service": name,
+					"port":    svc.Port,
+				}).Info("Successfully registered service with etcd")
+			}
+		}()
+
+		wg.Wait()
+
+		// indicate that the service was registered by returning no error
+		if regerr == nil {
+			return nil
+		}
+
+		// elsewise do an exponential backoff and try again
+		time.Sleep(2 << uint(try) * time.Millisecond)
 	}
 
-	bytes, err := svc.Marshal()
-	if err != nil {
-		return err
-	}
-
-	if _, err = etcdClient.Set(svc.path(), string(bytes), 0); err != nil {
-		return err
-	}
-
-	return nil
+	// the service couldn't be registered, the service will panic and restart
+	return regerr
 }
 
 // Services returns an array of Service pointers detailing the service name and
-// port of each registered service.
+// port of each registered service. (from etcd)
 func Services() ([]*Service, error) {
 	etcdClient = etcd.NewClient([]string{EtcdHost})
 
@@ -124,6 +180,7 @@ func Services() ([]*Service, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		services[i] = svc
 	}
 
