@@ -113,9 +113,9 @@ func RegisterService(name string, port int, retries int) error {
 					"service": name,
 					"port":    svc.Port,
 					"errstr":  err.Error(),
-				}).Warn("Failed to register service with etcd")
+				}).Error("Failed to register service with etcd. Service Validation Failed.")
 				regerr = err
-				return
+				panic(err)
 			}
 			bytes, err := svc.Marshal()
 			if err != nil {
@@ -124,19 +124,21 @@ func RegisterService(name string, port int, retries int) error {
 					"service": name,
 					"port":    svc.Port,
 					"errstr":  err.Error(),
-				}).Warn("Failed to register service with etcd")
+				}).Error("Failed to register service with etcd. Marshalling Failed.")
 				regerr = err
-				return
+				panic(err)
 			}
+
 			if _, err = etcdClient.Set(svc.path(), string(bytes), 0); err != nil {
 				log.WithFields(log.Fields{
 					"action":  "set",
 					"service": name,
 					"port":    svc.Port,
 					"errstr":  err.Error(),
-				}).Warn("Failed to register service with etcd")
+				}).Warn("Failed to register service with etcd.")
 				regerr = err
 				return
+
 			} else {
 				log.WithFields(log.Fields{
 					"action":  "set",
