@@ -10,12 +10,12 @@ machine:
 dependencies:
   pre:
     - docker info
-    - go version
     - docker login -e $DOCKER_EMAIL -u $DOCKER_USERNAME -p $DOCKER_PASSWORD quay.io
     - docker pull quay.io/coreos/etcd:v2.0.0
-    - go get github.com/Sirupsen/logrus
-    - go get github.com/coreos/etcd/client
-    - go get golang.org/x/net/context
-    - go get github.com/stretchr/testify/assert
+    - go get github.com/constabulary/gb/...
+    - gb vendor restore
   override:
     - docker run -d -p 2379:2379 -p 4001:4001 quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 
+test:
+  override:
+    - gb test
