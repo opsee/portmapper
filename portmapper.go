@@ -3,27 +3,31 @@ package portmapper
 import (
 	"encoding/json"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
-	"github.com/coreos/go-etcd/etcd"
 	"os"
-	"sync"
 	"time"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/coreos/etcd/client"
+	"golang.org/x/net/context"
 )
 
 var (
-	// RegistryPath sets the location in etcd where pomapper will store data.
+	// RegistryPath sets the location in etcd where portmapper will store data.
 	// Default: /opsee.co/portmapper
-	RegistryPath string
-	// EtcdHost is the IP_ADDRESS:PORT location of Etcd.
-	// Default: http://127.0.0.1:2379
-	EtcdHost   string
-	etcdClient *etcd.Client
-)
-
-func init() {
 	RegistryPath = "/opsee.co/portmapper"
-	EtcdHost = "http://127.0.0.1:2379"
-}
+
+	// max retries for exponential backoff
+	MaxRetries                      = 11
+	RequestTimeoutSec time.Duration = 5
+
+	// etcd client config
+	cfg = client.Config{
+		Endpoints: []string{"http://127.0.0.1:2379"},
+		Transport: client.DefaultTransport,
+		// set timeout per request to fail fast when the target endpoint is unavailable
+		HeaderTimeoutPerRequest: time.Second,
+	}
+)
 
 // Service is a mapping between a service name and port. It may also contain
 // the hostname where the service is running or the container ID in the
@@ -35,6 +39,7 @@ type Service struct {
 	Hostname string `json:"hostname,omitempty"`
 }
 
+// ensure service name has field and valid port
 func (s *Service) validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("Service lacks Name field: %v", s)
@@ -46,6 +51,7 @@ func (s *Service) validate() error {
 	return nil
 }
 
+// returns the complete path of the service in etcd
 func (s *Service) path() string {
 	return fmt.Sprintf("%s/%s:%d", RegistryPath, s.Name, s.Port)
 }
@@ -56,6 +62,7 @@ func (s *Service) Marshal() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return bytes, nil
 }
 
@@ -72,119 +79,197 @@ func UnmarshalService(bytes []byte) (*Service, error) {
 
 // Unregister a (service, port) tuple.
 func Unregister(name string, port int) error {
-	etcdClient = etcd.NewClient([]string{EtcdHost})
-
+	// service doesn't have a name or has an invalid port
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
 	if err := svc.validate(); err != nil {
-		return err
+		log.WithFields(log.Fields{
+			"action":  "Validate",
+			"service": name,
+			"port":    svc.Port,
+			"errstr":  err.Error(),
+		}).Error("Service Validation Failed.")
+		panic(err)
 	}
 
-	if _, err := etcdClient.Delete(svc.path(), false); err != nil {
-		return err
+	// initialize a new etcd client
+	c, err := client.New(cfg)
+	if err != nil {
+		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
+	}
+
+	kAPI := client.NewKeysAPI(c)
+
+	// attempt to delete the svc's path with exponential backoff
+	for try := 0; try < MaxRetries; try++ {
+		// 5 second context
+		ctx, cancel := context.WithTimeout(context.Background(), RequestTimeoutSec*time.Second)
+		defer cancel()
+
+		_, err = kAPI.Delete(context.Background(), svc.path(), nil)
+		if err != nil {
+			// handle error
+			if err == context.DeadlineExceeded {
+				log.WithFields(log.Fields{
+					"action":  "Validate",
+					"service": name,
+					"port":    svc.Port,
+					"attempt": try,
+					"errstr":  err.Error(),
+				}).Warn("Service path deletion exceeded context deadline. Retrying")
+			} else {
+				log.WithFields(log.Fields{
+					"action":  "Validate",
+					"service": name,
+					"port":    svc.Port,
+					"errstr":  err.Error(),
+				}).Error("Service path deletion failed.")
+				return err
+			}
+		} else {
+			log.WithFields(log.Fields{
+				"action":  "set",
+				"service": name,
+				"port":    svc.Port,
+				"path":    svc.path(),
+			}).Info("Successfully unregistered service with etcd")
+			break
+		}
+
+		time.Sleep(2 << uint(try) * time.Millisecond)
 	}
 
 	return nil
 }
 
-// legacy register
-// Register a (service, port) tuple.
+// Register a service with etcd
 func Register(name string, port int) error {
-	return RegisterService(name, port, 11) // about 4 seconds
-}
-
-// Register a (service, port) tuple.
-func RegisterService(name string, port int, retries int) error {
 	svc := &Service{name, port, os.Getenv("HOSTNAME")}
 
-	var regerr error
+	if err := svc.validate(); err != nil {
+		log.WithFields(log.Fields{
+			"action":  "Validate",
+			"service": name,
+			"port":    svc.Port,
+			"errstr":  err.Error(),
+		}).Error("Service Validation Failed.")
+		panic(err)
+	}
 
-	for try := 1; try < retries; try++ {
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
+	bytes, err := svc.Marshal()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"action":  "Marshall",
+			"service": name,
+			"port":    svc.Port,
+			"errstr":  err.Error(),
+		}).Error("Marshalling Failed.")
+		panic(err)
+	}
 
-		// Attempt to register the service
-		go func() {
-			defer wg.Done()
-			etcdClient = etcd.NewClient([]string{EtcdHost})
+	// initialize a new etcd client
+	c, err := client.New(cfg)
+	if err != nil {
+		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
+	}
 
-			if err := svc.validate(); err != nil {
+	kAPI := client.NewKeysAPI(c)
+
+	// attempt to delete the svc's path with exponential backoff
+	for try := 0; try < MaxRetries; try++ {
+		// 5 second context
+		ctx, cancel := context.WithTimeout(context.Background(), RequestTimeoutSec*time.Second)
+		defer cancel()
+
+		_, err = kAPI.Delete(context.Background(), svc.path(), nil)
+		_, err := kAPI.Set(ctx, svc.path(), string(bytes), nil)
+		if err != nil {
+			// handle error
+			if err == context.DeadlineExceeded {
 				log.WithFields(log.Fields{
-					"action":  "set",
+					"action":  "Validate",
 					"service": name,
 					"port":    svc.Port,
+					"attempt": try,
 					"errstr":  err.Error(),
-				}).Error("Failed to register service with etcd. Service Validation Failed.")
-				regerr = err
-				panic(err)
-			}
-			bytes, err := svc.Marshal()
-			if err != nil {
-				log.WithFields(log.Fields{
-					"action":  "set",
-					"service": name,
-					"port":    svc.Port,
-					"errstr":  err.Error(),
-				}).Error("Failed to register service with etcd. Marshalling Failed.")
-				regerr = err
-				panic(err)
-			}
-
-			if _, err = etcdClient.Set(svc.path(), string(bytes), 0); err != nil {
-				log.WithFields(log.Fields{
-					"action":  "set",
-					"service": name,
-					"port":    svc.Port,
-					"errstr":  err.Error(),
-				}).Warn("Failed to register service with etcd.")
-				regerr = err
-				return
-
+				}).Warn("Service registration exceeded context deadline. Retrying")
 			} else {
 				log.WithFields(log.Fields{
-					"action":  "set",
+					"action":  "Validate",
 					"service": name,
 					"port":    svc.Port,
-				}).Info("Successfully registered service with etcd")
+					"errstr":  err.Error(),
+				}).Error("Service registration failed.")
+				return err
 			}
-		}()
-
-		wg.Wait()
-
-		// indicate that the service was registered by returning no error
-		if regerr == nil {
-			return nil
+		} else {
+			log.WithFields(log.Fields{
+				"action":  "set",
+				"service": name,
+				"port":    svc.Port,
+				"path":    svc.path(),
+			}).Info("Successfully registered service with etcd")
+			break
 		}
 
-		// elsewise do an exponential backoff and try again
 		time.Sleep(2 << uint(try) * time.Millisecond)
 	}
 
-	// the service couldn't be registered, the service will panic and restart
-	return regerr
+	return nil
 }
 
 // Services returns an array of Service pointers detailing the service name and
 // port of each registered service. (from etcd)
 func Services() ([]*Service, error) {
-	etcdClient = etcd.NewClient([]string{EtcdHost})
-
-	resp, err := etcdClient.Get(RegistryPath, false, false)
+	// initialize a new etcd client
+	c, err := client.New(cfg)
 	if err != nil {
+		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
 		return nil, err
 	}
 
-	svcNodes := resp.Node.Nodes
-	services := make([]*Service, len(svcNodes))
+	kAPI := client.NewKeysAPI(c)
+	services := make([]*Service, 0)
 
-	for i, node := range svcNodes {
-		svcStr := node.Value
-		svc, err := UnmarshalService([]byte(svcStr))
+	// attempt to delete the svc's path with exponential backoff
+	for try := 0; try < MaxRetries; try++ {
+		// 5 second context
+		ctx, cancel := context.WithTimeout(context.Background(), RequestTimeoutSec*time.Second)
+		defer cancel()
+
+		resp, err := kAPI.Get(ctx, RegistryPath, nil)
 		if err != nil {
-			return nil, err
+			// handle error
+			if err == context.DeadlineExceeded {
+				log.WithFields(log.Fields{
+					"action":  "Enumerate Services",
+					"attempt": try,
+					"errstr":  err.Error(),
+				}).Warn("Service enumeration exceeded context deadline. Retrying")
+			} else {
+				log.WithFields(log.Fields{
+					"action":  "Enumerate Services",
+					"attempt": try,
+					"errstr":  err.Error(),
+				}).Error("Service enumeration failed")
+				return nil, err
+			}
+		} else {
+
+			svcNodes := resp.Node.Nodes
+			services = make([]*Service, len(svcNodes))
+
+			for i, node := range svcNodes {
+				svcStr := node.Value
+				svc, err := UnmarshalService([]byte(svcStr))
+				if err != nil {
+					return nil, err
+				}
+
+				services[i] = svc
+			}
 		}
 
-		services[i] = svc
+		time.Sleep(2 << uint(try) * time.Millisecond)
 	}
-
 	return services, nil
 }
