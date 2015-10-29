@@ -15,21 +15,32 @@ import (
 var (
 	// RegistryPath sets the location in etcd where portmapper will store data.
 	// Default: /opsee.co/portmapper
+	EtcdHost     = "http://127.0.0.1:2379"
 	RegistryPath = "/opsee.co/portmapper"
 
 	// max retries for exponential backoff
 	MaxRetries                      = 11
 	RequestTimeoutSec time.Duration = 5
-	ETCD_HOST                       = os.Getenv("ETCD_HOST")
 
 	// etcd client config
 	cfg = client.Config{
-		Endpoints: []string{ETCD_HOST},
+		Endpoints: []string{EtcdHost},
 		Transport: client.DefaultTransport,
 		// set timeout per request to fail fast when the target endpoint is unavailable
 		HeaderTimeoutPerRequest: time.Second,
 	}
 )
+
+func init() {
+	if len(os.Getenv("PORTMAPPER_ETCD_HOST")) > 0 {
+		cfg = client.Config{
+			Endpoints: []string{os.Getenv("PORTMAPPER_ETCD_HOST")},
+			Transport: client.DefaultTransport,
+			// set timeout per request to fail fast when the target endpoint is unavailable
+			HeaderTimeoutPerRequest: time.Second,
+		}
+	}
+}
 
 // Service is a mapping between a service name and port. It may also contain
 // the hostname where the service is running or the container ID in the
