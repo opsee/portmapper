@@ -19,10 +19,11 @@ var (
 	// max retries for exponential backoff
 	MaxRetries                      = 11
 	RequestTimeoutSec time.Duration = 5
+	ETCD_HOST                       = os.Getenv("ETCD_HOST")
 
 	// etcd client config
 	cfg = client.Config{
-		Endpoints: []string{"http://127.0.0.1:2379"},
+		Endpoints: []string{ETCD_HOST},
 		Transport: client.DefaultTransport,
 		// set timeout per request to fail fast when the target endpoint is unavailable
 		HeaderTimeoutPerRequest: time.Second,
@@ -106,7 +107,7 @@ func Unregister(name string, port int) error {
 		ctx, cancel := context.WithTimeout(context.Background(), RequestTimeoutSec*time.Second)
 		defer cancel()
 
-		_, err = kAPI.Delete(context.Background(), svc.path(), nil)
+		_, err = kAPI.Delete(ctx, svc.path(), nil)
 		if err != nil {
 			// handle error
 			if err == context.DeadlineExceeded {
@@ -182,13 +183,12 @@ func Register(name string, port int) error {
 		ctx, cancel := context.WithTimeout(context.Background(), RequestTimeoutSec*time.Second)
 		defer cancel()
 
-		_, err = kAPI.Delete(context.Background(), svc.path(), nil)
 		_, err := kAPI.Set(ctx, svc.path(), string(bytes), nil)
 		if err != nil {
 			// handle error
 			if err == context.DeadlineExceeded {
 				log.WithFields(log.Fields{
-					"action":  "Validate",
+					"action":  "Register",
 					"service": name,
 					"port":    svc.Port,
 					"attempt": try,
@@ -196,7 +196,7 @@ func Register(name string, port int) error {
 				}).Warn("Service registration exceeded context deadline. Retrying")
 			} else {
 				log.WithFields(log.Fields{
-					"action":  "Validate",
+					"action":  "Register",
 					"service": name,
 					"port":    svc.Port,
 					"errstr":  err.Error(),
