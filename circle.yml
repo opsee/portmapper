@@ -8,10 +8,6 @@ machine:
   environment:
     IMPORT_PATH: "github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
     ci: "true"
-
-notify:
-  webhooks:
-    - url: https://hooks.slack.com/services/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machine:
 dependencies:
   pre:
     - docker info
