@@ -6,7 +6,6 @@ machine:
   services:
     - docker
   environment:
-    IMPORT_PATH: "github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
     ci: "true"
 dependencies:
   pre:
@@ -14,14 +13,9 @@ dependencies:
     - go version
     - docker login -e $DOCKER_EMAIL -u $DOCKER_USERNAME -p $DOCKER_PASSWORD quay.io
     - docker pull quay.io/coreos/etcd:v2.0.0
-    - go get github.com/tools/godep
+    - go get github.com/Sirupsen/logrus
+    - go get github.com/coreos/etcd/client
+    - go get golang.org/x/net/context
+    - go get github.com/stretchr/testify/assert
   override:
-    - docker run -e -name portmap_test_etcd quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 & 
-    - mkdir -p "$GOPATH/src/$IMPORT_PATH"
-    - rsync -azC --delete ./ "$GOPATH/src/$IMPORT_PATH/"
-test:
-  pre:
-    - go vet ./...
-
-  override:
-    - godep go test ./...
+    - docker run -d -p 2379:2379 -p 4001:4001 quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 
