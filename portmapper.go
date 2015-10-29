@@ -2,6 +2,7 @@ package portmapper
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -89,7 +90,7 @@ func Unregister(name string, port int) error {
 			"port":    svc.Port,
 			"errstr":  err.Error(),
 		}).Error("Service Validation Failed.")
-		panic(err)
+		return err
 	}
 
 	// initialize a new etcd client
@@ -154,7 +155,7 @@ func Register(name string, port int) error {
 			"port":    svc.Port,
 			"errstr":  err.Error(),
 		}).Error("Service Validation Failed.")
-		panic(err)
+		return err
 	}
 
 	bytes, err := svc.Marshal()
@@ -165,7 +166,7 @@ func Register(name string, port int) error {
 			"port":    svc.Port,
 			"errstr":  err.Error(),
 		}).Error("Marshalling Failed.")
-		panic(err)
+		return err
 	}
 
 	// initialize a new etcd client
@@ -226,11 +227,10 @@ func Services() ([]*Service, error) {
 	c, err := client.New(cfg)
 	if err != nil {
 		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
-		panic(err)
+		return nil, err
 	}
 
 	kAPI := client.NewKeysAPI(c)
-	services := make([]*Service, 0)
 
 	// attempt to delete the svc's path with exponential backoff
 	for try := 0; try < MaxRetries; try++ {
@@ -238,7 +238,7 @@ func Services() ([]*Service, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), RequestTimeoutSec*time.Second)
 		defer cancel()
 
-		resp, err := kAPI.Get(ctx, RegistryPath, nil)
+		resp, err := kAPI.Get(ctx, RegistryPath, &client.GetOptions{Sort: true})
 		if err != nil {
 			// handle error
 			if err == context.DeadlineExceeded {
@@ -255,23 +255,33 @@ func Services() ([]*Service, error) {
 				}).Error("Service enumeration failed")
 				return nil, err
 			}
+		} else if resp == nil {
+			log.WithFields(log.Fields{
+				"action":  "Enumerate Services",
+				"attempt": try,
+				"errstr":  "nil response for etcd get",
+			}).Error("Service enumeration failed")
+			return nil, errors.New("Nil response from  etcd get")
 		} else {
-
 			svcNodes := resp.Node.Nodes
-			services = make([]*Service, len(svcNodes))
+			services := make([]*Service, len(svcNodes))
 
 			for i, node := range svcNodes {
 				svcStr := node.Value
 				svc, err := UnmarshalService([]byte(svcStr))
+
 				if err != nil {
 					return nil, err
 				}
 
 				services[i] = svc
 			}
+
+			return services, nil
 		}
 
 		time.Sleep(2 << uint(try) * time.Millisecond)
 	}
-	return services, nil
+
+	return nil, errors.New("Couldn't get services from etcd")
 }
