@@ -95,6 +95,7 @@ func Unregister(name string, port int) error {
 	c, err := client.New(cfg)
 	if err != nil {
 		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
+		panic(err)
 	}
 
 	kAPI := client.NewKeysAPI(c)
@@ -170,6 +171,7 @@ func Register(name string, port int) error {
 	c, err := client.New(cfg)
 	if err != nil {
 		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
+		panic(err)
 	}
 
 	kAPI := client.NewKeysAPI(c)
@@ -224,7 +226,7 @@ func Services() ([]*Service, error) {
 	c, err := client.New(cfg)
 	if err != nil {
 		log.WithFields(log.Fields{"service": "portmapper", "errstr": err.Error()}).Fatal("Error initializing etcd client")
-		return nil, err
+		panic(err)
 	}
 
 	kAPI := client.NewKeysAPI(c)
