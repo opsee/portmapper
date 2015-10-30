@@ -12,7 +12,7 @@ dependencies:
     - go get github.com/Masterminds/glide
   override:
     - glide rebuild
-    - docker run -d -e -name portmap_test_etcd quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379
+    - docker run -d quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379
 test:
   override:
     - go test
