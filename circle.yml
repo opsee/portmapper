@@ -6,7 +6,6 @@ machine:
   services:
     - docker
   environment:
-    IMPORT_PATH: "github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME"
     ci: "true"
 dependencies:
   pre:
@@ -16,12 +15,7 @@ dependencies:
     - docker pull quay.io/coreos/etcd:v2.0.0
     - go get github.com/tools/godep
   override:
-    - docker run -e -name portmap_test_etcd quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 & 
-    - mkdir -p "$GOPATH/src/$IMPORT_PATH"
-    - rsync -azC --delete ./ "$GOPATH/src/$IMPORT_PATH/"
+    - docker run -d -e -name portmap_test_etcd quay.io/coreos/etcd:v2.0.0 -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379
 test:
-  pre:
-    - go vet ./...
-
   override:
-    - godep go test ./...
+    - go test
