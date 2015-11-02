@@ -19,7 +19,7 @@ var (
 	RegistryPath = "/opsee.co/portmapper"
 
 	// max retries for exponential backoff
-	MaxRetries                      = 11
+	MaxRetries                      = 3
 	RequestTimeoutSec time.Duration = 5
 
 	// etcd client config
@@ -32,9 +32,9 @@ var (
 )
 
 func init() {
-	if len(os.Getenv("PORTMAPPER_ETCD_HOST")) > 0 {
+	if len(os.Getenv("ETCD_HOST")) > 0 {
 		cfg = client.Config{
-			Endpoints: []string{os.Getenv("PORTMAPPER_ETCD_HOST")},
+			Endpoints: []string{os.Getenv("ETCD_HOST")},
 			Transport: client.DefaultTransport,
 			// set timeout per request to fail fast when the target endpoint is unavailable
 			HeaderTimeoutPerRequest: time.Second,
